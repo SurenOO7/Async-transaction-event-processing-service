@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.consumer.retry import backoff, encode_retry
-from app.consumer.retry_worker import RetryWorker
+from app.consumer.retry_worker import run_retry_once
 
 
 class FakeRedis:
@@ -53,11 +53,11 @@ def _session_factory():
     return factory
 
 
-def make_worker(redis, *, store, currency, max_attempts=5):
-    return RetryWorker(
+def _kw(redis, *, store, convert, max_attempts=5):
+    return dict(
         redis=redis,
         session_factory=_session_factory(),
-        currency=currency,
+        convert=convert,
         store=store,
         zset="transactions:retry",
         dlq="transactions:dead",
@@ -65,20 +65,17 @@ def make_worker(redis, *, store, currency, max_attempts=5):
     )
 
 
-def _ok_currency():
-    c = AsyncMock()
-    c.to_usd.return_value = Decimal("11.00")
-    return c
+def _ok_convert():
+    return AsyncMock(return_value=Decimal("11.00"))
 
 
 # AC4.3 — exponential backoff, capped.
 def test_backoff_exponential_and_capped():
-    assert backoff(1) == 1          # base
+    assert backoff(1) == 1
     assert backoff(2) == 2
     assert backoff(3) == 4
     assert backoff(4) == 8
-    assert backoff(100) == 300      # capped at RETRY_MAX_DELAY_SECONDS
-    # strictly non-decreasing
+    assert backoff(100) == 300  # capped at RETRY_MAX_DELAY_SECONDS
     seq = [backoff(n) for n in range(1, 12)]
     assert seq == sorted(seq)
 
@@ -90,13 +87,11 @@ async def test_only_due_events_picked_up():
     await redis.zadd("transactions:retry", {encode_retry(_fields(id="due"), 1): now - 1})
     await redis.zadd("transactions:retry", {encode_retry(_fields(id="future"), 1): now + 100})
     store = AsyncMock(return_value=True)
-    worker = make_worker(redis, store=store, currency=_ok_currency())
 
-    processed = await worker.run_once(now=now)
+    processed = await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert()))
 
     assert processed == 1
     assert store.await_args.kwargs["id"] == "due"
-    # the future event is untouched in the ZSET
     assert await redis.zcard("transactions:retry") == 1
 
 
@@ -106,9 +101,8 @@ async def test_success_removes_and_no_dlq():
     now = 1000.0
     await redis.zadd("transactions:retry", {encode_retry(_fields(), 1): now - 1})
     store = AsyncMock(return_value=True)
-    worker = make_worker(redis, store=store, currency=_ok_currency())
 
-    await worker.run_once(now=now)
+    await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert()))
 
     assert await redis.zcard("transactions:retry") == 0
     assert redis.streams.get("transactions:dead") is None
@@ -120,13 +114,11 @@ async def test_failure_reschedules_with_backoff():
     now = 1000.0
     await redis.zadd("transactions:retry", {encode_retry(_fields(), 1): now - 1})
     store = AsyncMock(side_effect=RuntimeError("db down"))
-    worker = make_worker(redis, store=store, currency=_ok_currency())
 
-    await worker.run_once(now=now)
+    await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert()))
 
     assert await redis.zcard("transactions:retry") == 1
     member, score = next(iter(redis.zset.items()))
-    # attempt 1 just failed => completed 2, scheduled backoff(2) ahead of now
     assert '"attempt": 2' in member
     assert score == pytest.approx(now + backoff(2))
     assert redis.streams.get("transactions:dead") is None
@@ -136,14 +128,12 @@ async def test_failure_reschedules_with_backoff():
 async def test_dlq_after_max_attempts():
     redis = FakeRedis()
     now = 1000.0
-    # attempt=4 already completed; this failing run is attempt 5 => DLQ at max=5
     await redis.zadd("transactions:retry", {encode_retry(_fields(), 4): now - 1})
     store = AsyncMock(side_effect=RuntimeError("still down"))
-    worker = make_worker(redis, store=store, currency=_ok_currency(), max_attempts=5)
 
-    await worker.run_once(now=now)
+    await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert(), max_attempts=5))
 
-    assert await redis.zcard("transactions:retry") == 0  # not rescheduled
+    assert await redis.zcard("transactions:retry") == 0
     dead = redis.streams["transactions:dead"]
     assert len(dead) == 1
     assert dead[0]["id"] == "evt-1"
@@ -153,5 +143,4 @@ async def test_dlq_after_max_attempts():
 # Empty queue is a no-op (main loop unaffected: retry worker is independent).
 async def test_empty_queue_noop():
     redis = FakeRedis()
-    worker = make_worker(redis, store=AsyncMock(), currency=_ok_currency())
-    assert await worker.run_once(now=1000.0) == 0
+    assert await run_retry_once(now=1000.0, **_kw(redis, store=AsyncMock(), convert=_ok_convert())) == 0
