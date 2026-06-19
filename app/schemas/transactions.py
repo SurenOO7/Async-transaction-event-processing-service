@@ -39,3 +39,20 @@ class UserSummary(BaseModel):
     user_id: str
     total_usd: Decimal
     count: int
+
+
+class TransactionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)  # build from ORM rows
+
+    id: str
+    user_id: str
+    amount: Decimal
+    currency: str
+    amount_usd: Decimal
+    timestamp: datetime
+
+
+class TransactionPage(BaseModel):
+    items: list[TransactionRead]
+    limit: int
+    offset: int

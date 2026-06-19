@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routes import transactions
+from app.api.routes import transactions, users
 from app.queue import create_consumer_group
 from app.redis_client import create_redis
 
@@ -17,3 +17,4 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="event-service", lifespan=lifespan)
 app.include_router(transactions.router)
+app.include_router(users.router)
