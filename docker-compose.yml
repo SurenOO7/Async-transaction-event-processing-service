@@ -1,0 +1,3 @@
+# Skeleton only — services are filled in at Slice 10.
+# Will run: postgres, redis, migrate (one-shot), api, consumer, retry-worker.
+services: {}
