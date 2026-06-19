@@ -1,8 +1,3 @@
-"""Slice 1 — validation contract for the ingest payload (AC1.1–AC1.3).
-
-The schema is the first line of defense: a bad payload must be rejected at the
-edge (422) before anything is enqueued. These tests pin that behavior.
-"""
 from decimal import Decimal
 
 import pytest
