@@ -4,6 +4,14 @@ import time
 from app.config import settings
 
 
+def backoff(attempt: int) -> float:
+    # Exponential, capped. attempt = number of attempts already completed;
+    # backoff(1)=base is the wait before the first retry. Cap stops the delay
+    # from growing unbounded on a persistently-failing event.
+    delay = settings.RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+    return min(delay, settings.RETRY_MAX_DELAY_SECONDS)
+
+
 def encode_retry(fields: dict, attempt: int) -> str:
     return json.dumps({"fields": fields, "attempt": attempt})
 
