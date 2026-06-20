@@ -5,7 +5,7 @@ conversion + dedup + durable storage), and serves per-user reads. Built around
 **Redis Streams** for at-least-once delivery, a **separate retry worker + dead-letter
 queue** for failure handling, and **indexed Postgres** for reads.
 
-Five processes (see `docker-compose.yml`): **postgres**, **redis**, a one-shot
+Six services (see `docker-compose.yml`): **postgres**, **redis**, a one-shot
 **migrate**, the **api**, the **consumer**, and the **retry-worker**.
 
 ## Run it
@@ -20,23 +20,32 @@ before api/consumer start). The API is on `http://localhost:8000`.
 ```bash
 # enqueue an event (currency normalized, amount validated) -> 202
 curl -X POST localhost:8000/transactions -H 'Content-Type: application/json' \
-  -d '{"id":"evt-1","user_id":"alice","amount":"100.00","currency":"eur","timestamp":"2026-06-20T12:00:00Z"}'
+  -d '{"id":"evt-1","user_id":"alice","amount":"100.00","currency":"usd","timestamp":"2026-06-20T12:00:00Z"}'
+
+# non-USD converts live, no setup (50 EUR -> ~57 USD at the current rate)
+curl -X POST localhost:8000/transactions -H 'Content-Type: application/json' \
+  -d '{"id":"evt-2","user_id":"alice","amount":"50.00","currency":"eur","timestamp":"2026-06-20T12:05:00Z"}'
 
 curl localhost:8000/users/alice/summary
 curl "localhost:8000/users/alice/transactions?from=2026-06-01T00:00:00Z&limit=50"
 curl localhost:9100/metrics            # consumer metrics (prometheus)
 ```
 
-FX rates are fetched once per currency and cached in Redis (`rate:{CUR}:USD`,
-300s TTL). For a fully offline demo, seed a rate:
-`docker compose exec redis redis-cli set rate:EUR:USD 1.10`.
+**FX rates.** Rates come from [Frankfurter](https://frankfurter.dev) — free,
+keyless, **works live out of the box**. A rate is fetched once per currency and
+cached in Redis (`rate:{CUR}:USD`, 300s TTL); USD passes through with no lookup.
+If the lookup is unavailable (network down, or a currency the provider doesn't
+know, e.g. `ZZZ`), the event isn't lost: it retries with capped backoff and
+finally dead-letters (see `transactions:dead`) — the live demo of the failure
+path. Point `FX_API_BASE_URL` at any provider with the same `from/to` →
+`rates.USD` response shape to swap sources.
 
 ## Tests
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest        # 59 tests; unit-level (fakes/sqlite), no infra needed
+python -m pytest        # 62 tests; unit-level (fakes/sqlite), no infra needed
 ```
 
 ## Design decisions

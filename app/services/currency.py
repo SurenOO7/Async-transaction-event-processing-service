@@ -18,7 +18,7 @@ async def _fetch_rate(currency: str, *, http: httpx.AsyncClient, base_url: str) 
     try:
         resp = await http.get(
             f"{base_url.rstrip('/')}/latest",
-            params={"base": currency, "symbols": "USD"},
+            params={"from": currency, "to": "USD"},
         )
         resp.raise_for_status()
         data = resp.json()

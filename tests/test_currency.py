@@ -44,7 +44,7 @@ async def test_cache_miss_fetches_and_caches(httpx_mock):
     assert kwargs.get("ex") == 300
 
 
-# API failure surfaces as CurrencyServiceError (retryable).
+# API failure surfaces as CurrencyServiceError (retryable -> retry/backoff -> DLQ).
 async def test_api_failure_raises(httpx_mock):
     redis = AsyncMock()
     redis.get.return_value = None
