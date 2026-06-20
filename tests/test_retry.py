@@ -1,72 +1,22 @@
-from contextlib import asynccontextmanager
-from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.consumer.retry import backoff, encode_retry
 from app.consumer.retry_worker import run_retry_once
-
-
-class FakeRedis:
-    """Minimal in-memory stand-in: a real-enough ZSET + append-only streams."""
-
-    def __init__(self):
-        self.zset: dict[str, float] = {}
-        self.streams: dict[str, list] = {}
-
-    async def zadd(self, key, mapping):
-        self.zset.update(mapping)
-        return len(mapping)
-
-    async def zrangebyscore(self, key, min, max):
-        return [m for m, s in sorted(self.zset.items(), key=lambda kv: kv[1]) if min <= s <= max]
-
-    async def zrem(self, key, member):
-        return 1 if self.zset.pop(member, None) is not None else 0
-
-    async def zcard(self, key):
-        return len(self.zset)
-
-    async def xadd(self, key, fields):
-        self.streams.setdefault(key, []).append(fields)
-        return f"{len(self.streams[key])}-0"
-
-
-def _fields(**overrides):
-    fields = {
-        "id": "evt-1",
-        "user_id": "u1",
-        "amount": "10.00",
-        "currency": "EUR",
-        "timestamp": "2026-06-19T12:00:00+00:00",
-    }
-    fields.update(overrides)
-    return fields
-
-
-def _session_factory():
-    @asynccontextmanager
-    async def factory():
-        yield AsyncMock()
-
-    return factory
+from tests.helpers import FakeRedis, make_fields, ok_convert, session_factory
 
 
 def _kw(redis, *, store, convert, max_attempts=5):
     return dict(
         redis=redis,
-        session_factory=_session_factory(),
+        session_factory=session_factory(),
         convert=convert,
         store=store,
         zset="transactions:retry",
         dlq="transactions:dead",
         max_attempts=max_attempts,
     )
-
-
-def _ok_convert():
-    return AsyncMock(return_value=Decimal("11.00"))
 
 
 # AC4.3 — exponential backoff, capped.
@@ -84,11 +34,11 @@ def test_backoff_exponential_and_capped():
 async def test_only_due_events_picked_up():
     redis = FakeRedis()
     now = 1000.0
-    await redis.zadd("transactions:retry", {encode_retry(_fields(id="due"), 1): now - 1})
-    await redis.zadd("transactions:retry", {encode_retry(_fields(id="future"), 1): now + 100})
+    await redis.zadd("transactions:retry", {encode_retry(make_fields(id="due"), 1): now - 1})
+    await redis.zadd("transactions:retry", {encode_retry(make_fields(id="future"), 1): now + 100})
     store = AsyncMock(return_value=True)
 
-    processed = await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert()))
+    processed = await run_retry_once(now=now, **_kw(redis, store=store, convert=ok_convert()))
 
     assert processed == 1
     assert store.await_args.kwargs["id"] == "due"
@@ -99,10 +49,10 @@ async def test_only_due_events_picked_up():
 async def test_success_removes_and_no_dlq():
     redis = FakeRedis()
     now = 1000.0
-    await redis.zadd("transactions:retry", {encode_retry(_fields(), 1): now - 1})
+    await redis.zadd("transactions:retry", {encode_retry(make_fields(), 1): now - 1})
     store = AsyncMock(return_value=True)
 
-    await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert()))
+    await run_retry_once(now=now, **_kw(redis, store=store, convert=ok_convert()))
 
     assert await redis.zcard("transactions:retry") == 0
     assert redis.streams.get("transactions:dead") is None
@@ -112,10 +62,10 @@ async def test_success_removes_and_no_dlq():
 async def test_failure_reschedules_with_backoff():
     redis = FakeRedis()
     now = 1000.0
-    await redis.zadd("transactions:retry", {encode_retry(_fields(), 1): now - 1})
+    await redis.zadd("transactions:retry", {encode_retry(make_fields(), 1): now - 1})
     store = AsyncMock(side_effect=RuntimeError("db down"))
 
-    await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert()))
+    await run_retry_once(now=now, **_kw(redis, store=store, convert=ok_convert()))
 
     assert await redis.zcard("transactions:retry") == 1
     member, score = next(iter(redis.zset.items()))
@@ -128,10 +78,10 @@ async def test_failure_reschedules_with_backoff():
 async def test_dlq_after_max_attempts():
     redis = FakeRedis()
     now = 1000.0
-    await redis.zadd("transactions:retry", {encode_retry(_fields(), 4): now - 1})
+    await redis.zadd("transactions:retry", {encode_retry(make_fields(), 4): now - 1})
     store = AsyncMock(side_effect=RuntimeError("still down"))
 
-    await run_retry_once(now=now, **_kw(redis, store=store, convert=_ok_convert(), max_attempts=5))
+    await run_retry_once(now=now, **_kw(redis, store=store, convert=ok_convert(), max_attempts=5))
 
     assert await redis.zcard("transactions:retry") == 0
     dead = redis.streams["transactions:dead"]
@@ -140,7 +90,25 @@ async def test_dlq_after_max_attempts():
     assert dead[0]["attempts"] == "5"
 
 
+# If the outcome write (DLQ xadd) fails after the claim, the event is restored, not lost.
+async def test_outcome_write_failure_restores_member():
+    redis = FakeRedis()
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("redis blip on xadd")
+
+    redis.xadd = boom
+    now = 1000.0
+    await redis.zadd("transactions:retry", {encode_retry(make_fields(), 4): now - 1})
+    store = AsyncMock(side_effect=RuntimeError("db down"))
+
+    await run_retry_once(now=now, **_kw(redis, store=store, convert=ok_convert(), max_attempts=5))
+
+    # DLQ write failed, but the claimed member was put back — not lost.
+    assert await redis.zcard("transactions:retry") == 1
+
+
 # Empty queue is a no-op (main loop unaffected: retry worker is independent).
 async def test_empty_queue_noop():
     redis = FakeRedis()
-    assert await run_retry_once(now=1000.0, **_kw(redis, store=AsyncMock(), convert=_ok_convert())) == 0
+    assert await run_retry_once(now=1000.0, **_kw(redis, store=AsyncMock(), convert=ok_convert())) == 0

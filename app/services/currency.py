@@ -27,7 +27,7 @@ async def _fetch_rate(currency: str, *, http: httpx.AsyncClient, base_url: str) 
         raise CurrencyServiceError(f"could not fetch {currency}->USD rate") from exc
 
 
-async def _get_rate(currency, *, redis, http, base_url, ttl_seconds) -> Decimal:
+async def _get_rate(currency: str, *, redis, http: httpx.AsyncClient, base_url: str, ttl_seconds: int) -> Decimal:
     key = _cache_key(currency)
     cached = await redis.get(key)
     if cached is not None:

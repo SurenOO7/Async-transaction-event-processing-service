@@ -4,7 +4,7 @@ import os
 import httpx
 
 from app.config import settings
-from app.consumer.worker import run_once
+from app.consumer.worker import run_once, run_reclaim_once
 from app.db import SessionLocal
 from app.queue import create_consumer_group
 from app.redis_client import create_redis
@@ -24,6 +24,8 @@ async def main() -> None:
             # run_once blocks up to block_ms inside XREADGROUP, so an idle loop
             # isn't a busy-wait; the short sleep only yields on an empty batch.
             if await run_once(redis=redis, session_factory=SessionLocal, convert=convert, consumer=consumer) == 0:
+                # No new work: recover any messages stranded in a crashed worker's PEL.
+                await run_reclaim_once(redis=redis, session_factory=SessionLocal, convert=convert, consumer=consumer)
                 await asyncio.sleep(0.1)
     finally:
         await http.aclose()

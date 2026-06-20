@@ -24,7 +24,7 @@ def test_valid_payload_parses():
     assert event.id == "evt-1"
     assert event.user_id == "user-1"
     assert event.currency == "USD"
-    # AC3.4 groundwork: amount is a Decimal, not a float.
+    # amount is a Decimal, not a float.
     assert isinstance(event.amount, Decimal)
     assert event.amount == Decimal("10.50")
 
@@ -70,7 +70,7 @@ def test_unparseable_timestamp_rejected(bad_ts):
         TransactionEvent(**_valid_payload(timestamp=bad_ts))
 
 
-# Response/summary models exist with the right shape (used by later slices).
+# Response/summary models exist with the right shape.
 def test_response_models_shape():
     accepted = TransactionAccepted(id="evt-1")
     assert accepted.status == "accepted"

@@ -1,4 +1,3 @@
-from contextlib import asynccontextmanager
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -10,31 +9,11 @@ from app.consumer.retry_worker import run_retry_once
 from app.consumer.worker import process_one
 from app.main import app
 from app.services import metrics
-from tests.test_retry import FakeRedis
+from tests.helpers import FakeRedis, make_fields as _fields, session_factory as _sf
 
 
 def _val(name, **labels):
     return REGISTRY.get_sample_value(name, labels or None) or 0.0
-
-
-def _fields(**overrides):
-    f = {
-        "id": "evt-1",
-        "user_id": "u1",
-        "amount": "10.00",
-        "currency": "EUR",
-        "timestamp": "2026-06-19T12:00:00+00:00",
-    }
-    f.update(overrides)
-    return f
-
-
-def _sf():
-    @asynccontextmanager
-    async def f():
-        yield AsyncMock()
-
-    return f
 
 
 def test_record_processed_increments():

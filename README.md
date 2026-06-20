@@ -44,11 +44,12 @@ python -m pytest        # 59 tests; unit-level (fakes/sqlite), no infra needed
 ### Why Redis Streams (the queue)
 Streams give **at-least-once delivery** with consumer groups: a delivered message
 sits in the consumer's Pending Entries List (PEL) until `XACK`. If a worker
-crashes mid-process, the message isn't lost — it stays in the PEL and is
-redelivered (recoverable with `XAUTOCLAIM`). Plain pub/sub would drop messages
-with no consumer; a list (`LPUSH`/`BRPOP`) has no per-consumer ack/redelivery.
-Streams are the lightest thing that gives durable, replayable, ack-based
-delivery without standing up Kafka.
+crashes mid-process the message stays in the PEL; the consumer recovers it on an
+idle tick with **`XAUTOCLAIM`** (`run_reclaim_once`), which reassigns entries idle
+longer than a threshold and reprocesses them (dedup makes that safe). Plain
+pub/sub would drop messages with no consumer; a list (`LPUSH`/`BRPOP`) has no
+per-consumer ack/redelivery. Streams are the lightest thing that gives durable,
+replayable, ack-based delivery without standing up Kafka.
 
 ### Delivery guarantee: at-least-once + dedup ⇒ effectively exactly-once storage
 - The stream delivers **at least once** (crashes cause redelivery).
@@ -60,11 +61,16 @@ delivery without standing up Kafka.
 - Net effect: a transaction is **stored exactly once** even though it may be
   *delivered* and *processed* more than once.
 
-**Where could an event be lost?** Only at the `XACK`. We ack **only after** a
-successful store, so a crash before the ack means redelivery (safe), never loss.
-On a processing failure we enqueue to the retry queue **before** acking, so the
-event is always in *either* the stream PEL *or* the retry ZSET — never gone from
-both.
+**Where could an event be lost?** On the main path, only at the `XACK`: we ack
+**only after** a successful store, so a crash before the ack leaves the message in
+the PEL, recovered by `XAUTOCLAIM` (above) — never lost. On a processing failure
+we enqueue to the retry queue **before** acking, so the event is always in
+*either* the stream PEL *or* the retry ZSET. In the retry worker we claim an event
+with `ZREM` and, if the outcome write (reschedule/DLQ) fails, **restore** it to the
+ZSET so a Redis blip doesn't drop it. The one remaining (sub-millisecond) window —
+the retry process being killed between the claim and the restore — would be closed
+by a visibility-timeout claim (bump the score into the future instead of removing);
+see the 10x notes.
 
 ### Retries off the hot path + dead-letter queue
 Failures (DB down, FX lookup down) don't block the consumer. The consumer tries
@@ -98,6 +104,9 @@ aggregate per call. Fine at ~100 events/sec; see below for when it changes.
 - **Partition** the transactions table by time; archive cold partitions.
 - Scale consumers/retry-workers horizontally (consumer groups + `ZREM` claim
   already support this); shard Redis if the stream is the bottleneck.
+- **Visibility-timeout retry claim**: claim a due event by bumping its score into
+  the future instead of `ZREM`, so a retry-worker crash mid-process can't drop a
+  claimed event (closes the last sub-ms loss window).
 
 ## Not built (deliberately)
 API-key auth, CORS lockdown, and a token-bucket rate limiter are scoped but left
