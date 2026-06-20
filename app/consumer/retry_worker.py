@@ -35,7 +35,6 @@ async def run_retry_once(
     due = await redis.zrangebyscore(zset, min=0, max=now)
     processed = 0
     for member in due[:batch_size]:
-        # Claim by removing first: if zrem returns 0 another worker took it.
         if not await redis.zrem(zset, member):
             continue
         fields, attempt = decode_retry(member)

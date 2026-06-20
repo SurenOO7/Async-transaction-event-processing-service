@@ -19,7 +19,6 @@ def _kw(redis, *, store, convert):
     )
 
 
-# AC4.4 — success: store first, then XACK (ack only after successful storage).
 async def test_success_stores_then_acks():
     redis = AsyncMock()
     store = AsyncMock(return_value=True)
@@ -32,12 +31,11 @@ async def test_success_stores_then_acks():
     redis.zadd.assert_not_called()
 
 
-# AC4.1 / AC4.2 — failure routes to the retry queue and is not dropped.
 @pytest.mark.parametrize(
     "boom",
     [
-        ("store", RuntimeError("db down")),        # DB unavailable
-        ("convert", CurrencyServiceError("fx")),    # rate lookup unavailable
+        ("store", RuntimeError("db down")),
+        ("convert", CurrencyServiceError("fx")),
     ],
 )
 async def test_failure_routes_to_retry(boom):
@@ -52,11 +50,10 @@ async def test_failure_routes_to_retry(boom):
 
     await process_one("1-0", make_fields(), **_kw(redis, store=store, convert=convert))
 
-    redis.zadd.assert_awaited_once()  # enqueued to retry ZSET — not dropped
-    redis.xack.assert_awaited_once()  # handed off, removed from PEL
+    redis.zadd.assert_awaited_once()
+    redis.xack.assert_awaited_once()
 
 
-# On failure, retry is enqueued BEFORE the XACK (no loss window).
 async def test_retry_enqueued_before_ack():
     redis = AsyncMock()
     store = AsyncMock(side_effect=RuntimeError("db down"))
@@ -71,7 +68,6 @@ async def test_retry_enqueued_before_ack():
     assert names.index("zadd") < names.index("xack")
 
 
-# "Try once" — a failure does not inline-retry (does not block the loop).
 async def test_failure_tries_once_no_inline_retry():
     redis = AsyncMock()
     store = AsyncMock(side_effect=RuntimeError("db down"))
@@ -83,7 +79,6 @@ async def test_failure_tries_once_no_inline_retry():
     assert convert.await_count == 1
 
 
-# A duplicate (store returns False) still acks; it is not routed to retry.
 async def test_duplicate_acks_no_retry():
     redis = AsyncMock()
     store = AsyncMock(return_value=False)
@@ -92,7 +87,6 @@ async def test_duplicate_acks_no_retry():
     redis.zadd.assert_not_called()
 
 
-# run_once reads a batch via XREADGROUP and dispatches each message.
 async def test_run_once_reads_and_dispatches():
     redis = AsyncMock()
     redis.xreadgroup.return_value = [["transactions", [("1-0", make_fields())]]]
@@ -108,7 +102,6 @@ async def test_run_once_reads_and_dispatches():
     redis.xack.assert_awaited_once_with("transactions", "processors", "1-0")
 
 
-# run_reclaim_once recovers messages stranded in a crashed worker's PEL via XAUTOCLAIM.
 async def test_reclaim_recovers_pending():
     redis = AsyncMock()
     redis.xautoclaim.return_value = ["0-0", [("5-0", make_fields())], []]

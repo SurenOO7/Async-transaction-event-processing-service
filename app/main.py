@@ -21,6 +21,11 @@ app.include_router(transactions.router)
 app.include_router(users.router)
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
 @app.get("/metrics")
 def metrics_endpoint() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

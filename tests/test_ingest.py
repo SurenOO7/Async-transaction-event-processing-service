@@ -8,6 +8,14 @@ from app.api.deps import get_redis
 from app.main import app
 
 
+async def test_health_ok():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
 def _payload(**overrides):
     payload = {
         "id": "evt-1",
@@ -36,7 +44,6 @@ async def client(redis_mock):
     app.dependency_overrides.clear()
 
 
-# AC1.1 + AC2.1 — valid payload -> 202 and exactly one stream entry.
 async def test_valid_returns_202_and_enqueues(client, redis_mock):
     resp = await client.post("/transactions", json=_payload())
     assert resp.status_code == 202
@@ -47,11 +54,10 @@ async def test_valid_returns_202_and_enqueues(client, redis_mock):
     stream_key, fields = redis_mock.xadd.call_args.args
     assert stream_key == "transactions"
     assert fields["id"] == "evt-1"
-    assert fields["currency"] == "EUR"   # AC1.3 normalized before enqueue
-    assert fields["amount"] == "10.50"   # Decimal serialized losslessly as string
+    assert fields["currency"] == "EUR"
+    assert fields["amount"] == "10.50"
 
 
-# AC1.2 — invalid payloads -> 422 and nothing enqueued.
 @pytest.mark.parametrize("bad", [{"amount": "0"}, {"currency": "eu"}, {"currency": "EURO"}])
 async def test_invalid_returns_422_no_enqueue(client, redis_mock, bad):
     resp = await client.post("/transactions", json=_payload(**bad))

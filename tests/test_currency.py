@@ -12,7 +12,6 @@ def deps(redis, *, base_url="https://fx.test", ttl=300):
     return dict(redis=redis, http=httpx.AsyncClient(base_url=base_url), base_url=base_url, ttl_seconds=ttl)
 
 
-# AC3.3 — USD passes through: no cache read, no network.
 async def test_usd_passthrough_no_lookup():
     redis = AsyncMock()
     result = await to_usd(Decimal("10.50"), "USD", **deps(redis))
@@ -20,7 +19,6 @@ async def test_usd_passthrough_no_lookup():
     redis.get.assert_not_called()
 
 
-# AC2 — cache hit: rate served from Redis, no network fetch.
 async def test_cache_hit_no_fetch(httpx_mock):
     redis = AsyncMock()
     redis.get.return_value = "0.5"
@@ -30,7 +28,6 @@ async def test_cache_hit_no_fetch(httpx_mock):
     assert httpx_mock.get_requests() == []
 
 
-# AC2 — cache miss: fetch from API, then write to cache with TTL.
 async def test_cache_miss_fetches_and_caches(httpx_mock):
     redis = AsyncMock()
     redis.get.return_value = None
@@ -44,7 +41,6 @@ async def test_cache_miss_fetches_and_caches(httpx_mock):
     assert kwargs.get("ex") == 300
 
 
-# API failure surfaces as CurrencyServiceError (retryable -> retry/backoff -> DLQ).
 async def test_api_failure_raises(httpx_mock):
     redis = AsyncMock()
     redis.get.return_value = None
@@ -53,7 +49,6 @@ async def test_api_failure_raises(httpx_mock):
         await to_usd(Decimal("10"), "EUR", **deps(redis))
 
 
-# Currency is normalized before the cache key is built.
 async def test_currency_normalized_for_key():
     redis = AsyncMock()
     redis.get.return_value = "2"

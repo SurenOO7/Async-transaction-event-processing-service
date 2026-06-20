@@ -22,7 +22,7 @@ async def _fetch_rate(currency: str, *, http: httpx.AsyncClient, base_url: str) 
         )
         resp.raise_for_status()
         data = resp.json()
-        return Decimal(str(data["rates"]["USD"]))  # str() avoids float->Decimal error
+        return Decimal(str(data["rates"]["USD"]))
     except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
         raise CurrencyServiceError(f"could not fetch {currency}->USD rate") from exc
 
@@ -33,7 +33,7 @@ async def _get_rate(currency: str, *, redis, http: httpx.AsyncClient, base_url: 
     if cached is not None:
         return Decimal(cached)
     rate = await _fetch_rate(currency, http=http, base_url=base_url)
-    await redis.set(key, str(rate), ex=ttl_seconds)  # TTL bounds staleness
+    await redis.set(key, str(rate), ex=ttl_seconds)
     return rate
 
 
@@ -46,7 +46,6 @@ async def to_usd(amount: Decimal, currency: str, *, redis, http, base_url, ttl_s
 
 
 def build_convert(redis, http: httpx.AsyncClient):
-    # Pre-bind the static FX deps so the hot loop just calls convert(amount, currency).
     return partial(
         to_usd,
         redis=redis,

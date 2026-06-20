@@ -11,7 +11,7 @@ async def process_event(fields, *, convert, session_factory, store) -> bool:
     Shared by the main consumer and the retry worker so the conversion + storage
     contract lives in one place.
     """
-    event = TransactionEvent(**fields)  # re-validate; garbage -> retry -> DLQ
+    event = TransactionEvent(**fields)
     amount_usd = await convert(event.amount, event.currency)
     async with session_factory() as session:
         return await store(
@@ -38,13 +38,9 @@ async def process_one(
 ) -> None:
     try:
         stored = await process_event(fields, convert=convert, session_factory=session_factory, store=store)
-        # Ack ONLY after a successful store: a crash before this point leaves the
-        # message in the PEL for XAUTOCLAIM recovery (at-least-once), not lost.
         await redis.xack(stream, group, msg_id)
         metrics.record_processed("success" if stored else "duplicate")
     except Exception:
-        # Try once, then hand off to the retry queue and ack. Enqueue BEFORE ack
-        # so the message is never gone from both places.
         await schedule_retry(redis, fields, attempt=1, delay=settings.RETRY_BASE_DELAY_SECONDS)
         await redis.xack(stream, group, msg_id)
         metrics.record_processed("failed")
@@ -93,7 +89,7 @@ async def run_reclaim_once(
     messages = result[1] if len(result) >= 2 else []
     processed = 0
     for msg_id, fields in messages:
-        if not fields:  # entry was trimmed/deleted from the stream; just drop the PEL ref
+        if not fields:
             await redis.xack(stream, group, msg_id)
             continue
         await process_one(

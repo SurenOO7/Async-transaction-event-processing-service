@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     RETRY_ZSET_KEY: str = "transactions:retry"
 
     FX_RATE_TTL_SECONDS: int = 300
-    FX_API_BASE_URL: str = "https://api.frankfurter.dev/v1"  # free, keyless live FX
+    FX_API_BASE_URL: str = "https://api.frankfurter.dev/v1"
 
     MAX_ATTEMPTS: int = 5
     RETRY_BASE_DELAY_SECONDS: int = 1

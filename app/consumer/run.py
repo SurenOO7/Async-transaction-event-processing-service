@@ -18,13 +18,10 @@ async def main() -> None:
     http = httpx.AsyncClient()
     convert = build_convert(redis, http)
     serve_metrics(settings.METRICS_PORT)
-    consumer = os.getenv("HOSTNAME", "worker-1")  # unique per container for PEL tracking
+    consumer = os.getenv("HOSTNAME", "worker-1")
     try:
         while True:
-            # run_once blocks up to block_ms inside XREADGROUP, so an idle loop
-            # isn't a busy-wait; the short sleep only yields on an empty batch.
             if await run_once(redis=redis, session_factory=SessionLocal, convert=convert, consumer=consumer) == 0:
-                # No new work: recover any messages stranded in a crashed worker's PEL.
                 await run_reclaim_once(redis=redis, session_factory=SessionLocal, convert=convert, consumer=consumer)
                 await asyncio.sleep(0.1)
     finally:

@@ -35,7 +35,6 @@ async def list_user_transactions(
         stmt = stmt.where(Transaction.timestamp >= from_)
     if to is not None:
         stmt = stmt.where(Transaction.timestamp <= to)
-    # id as tiebreaker so equal timestamps still order deterministically.
     stmt = (
         stmt.order_by(Transaction.timestamp.desc(), Transaction.id.desc())
         .limit(bounded_limit(limit))

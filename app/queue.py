@@ -5,7 +5,6 @@ from app.schemas.transactions import TransactionEvent
 
 
 def serialize(event: TransactionEvent) -> dict:
-    # Stream fields are str->str; Decimal/datetime go in as lossless text.
     return {
         "id": event.id,
         "user_id": event.user_id,
@@ -20,9 +19,6 @@ async def push_event(redis, event: TransactionEvent) -> str:
 
 
 async def create_consumer_group(redis) -> None:
-    # id="0" so the group reads from the start of the stream (never skips a
-    # message that arrived before the group existed). mkstream creates the
-    # stream if absent. BUSYGROUP just means it already exists — idempotent.
     try:
         await redis.xgroup_create(
             settings.STREAM_KEY, settings.CONSUMER_GROUP, id="0", mkstream=True

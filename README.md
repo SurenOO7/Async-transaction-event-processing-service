@@ -45,8 +45,36 @@ path. Point `FX_API_BASE_URL` at any provider with the same `from/to` →
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest        # 62 tests; unit-level (fakes/sqlite), no infra needed
+python -m pytest        # 63 tests; unit-level (fakes/sqlite), no infra needed
 ```
+
+## Run without Docker
+
+Needs Postgres and Redis running locally.
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+
+# point at local services
+export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/events
+export REDIS_URL=redis://localhost:6379/0
+
+alembic upgrade head                 # apply schema
+uvicorn app.main:app --reload        # API (Swagger at http://localhost:8000/docs)
+python -m app.consumer.run           # consumer (in another shell)
+python -m app.consumer.retry_run     # retry worker (in another shell)
+```
+
+## Endpoints
+
+Interactive Swagger UI at **`http://localhost:8000/docs`**.
+
+- `POST /transactions` — enqueue an event, returns **202** (validated, not yet processed)
+- `GET /users/{user_id}/summary` — total USD + transaction count
+- `GET /users/{user_id}/transactions?from=&to=&limit=&offset=` — paginated, newest first
+- `GET /health` — liveness check
+- `GET /metrics` — Prometheus metrics (API process); workers expose their own on `:9100`/`:9101`
 
 ## Design decisions
 
@@ -116,6 +144,23 @@ aggregate per call. Fine at ~100 events/sec; see below for when it changes.
 - **Visibility-timeout retry claim**: claim a due event by bumping its score into
   the future instead of `ZREM`, so a retry-worker crash mid-process can't drop a
   claimed event (closes the last sub-ms loss window).
+
+## Config
+
+Defaults are wired for `docker compose` — nothing needs setting to run it.
+Override these for local runs or to tune behaviour:
+
+| var | default | what |
+|---|---|---|
+| `DATABASE_URL` | `…@postgres:5432/events` | async Postgres URL |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis URL |
+| `FX_API_BASE_URL` | `api.frankfurter.dev/v1` | FX rate endpoint (keyless) |
+| `FX_RATE_TTL_SECONDS` | `300` | FX cache TTL |
+| `MAX_ATTEMPTS` | `5` | attempts before dead-letter |
+| `MAX_PAGE_SIZE` | `100` | read pagination cap |
+| `METRICS_PORT` | `9100` | worker metrics port |
+
+Full list (stream/group/queue keys, backoff bounds) in `.env.example`.
 
 ## Not built (deliberately)
 API-key auth, CORS lockdown, and a token-bucket rate limiter are scoped but left

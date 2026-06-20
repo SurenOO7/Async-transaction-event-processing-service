@@ -18,7 +18,7 @@ async def main() -> None:
     try:
         while True:
             await run_retry_once(redis=redis, session_factory=SessionLocal, convert=convert)
-            await asyncio.sleep(1)  # poll cadence for due retries
+            await asyncio.sleep(1)
     finally:
         await http.aclose()
         await redis.aclose()

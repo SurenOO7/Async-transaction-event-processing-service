@@ -6,7 +6,6 @@ import httpx
 from app.services.currency import build_convert
 
 
-# The entrypoints bind FX deps once via build_convert; USD still passes through.
 async def test_build_convert_usd_passthrough():
     redis = AsyncMock()
     convert = build_convert(redis, httpx.AsyncClient())

@@ -22,7 +22,6 @@ def test_record_processed_increments():
     assert _val("events_processed_total", status="success") == before + 1
 
 
-# AC7.1 — consumer success and failure are counted with a status label.
 async def test_consumer_success_and_failure_metrics():
     before_s = _val("events_processed_total", status="success")
     await process_one(
@@ -41,7 +40,6 @@ async def test_consumer_success_and_failure_metrics():
     assert _val("events_processed_total", status="failed") == before_f + 1
 
 
-# Dead-lettered events are counted separately.
 async def test_dead_letter_metric():
     redis = FakeRedis()
     now = 1000.0
@@ -55,7 +53,6 @@ async def test_dead_letter_metric():
     assert _val("events_dead_lettered_total") == before + 1
 
 
-# AC7.1 — metrics are exposed on a scrapeable endpoint.
 async def test_metrics_endpoint_scrapeable():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
