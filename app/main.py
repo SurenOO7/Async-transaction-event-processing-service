@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.api.routes import transactions, users
 from app.queue import create_consumer_group
@@ -18,3 +19,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="event-service", lifespan=lifespan)
 app.include_router(transactions.router)
 app.include_router(users.router)
+
+
+@app.get("/metrics")
+def metrics_endpoint() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

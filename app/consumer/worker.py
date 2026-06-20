@@ -1,6 +1,7 @@
 from app.config import settings
 from app.consumer.retry import schedule_retry
 from app.schemas.transactions import TransactionEvent
+from app.services import metrics
 from app.store import store_transaction
 
 
@@ -31,11 +32,13 @@ async def process_one(
         # Ack ONLY after a successful store: a crash before this point leaves the
         # message in the PEL for redelivery (at-least-once), not lost.
         await redis.xack(stream, group, msg_id)
+        metrics.record_processed("success")
     except Exception:
         # Try once, then hand off to the retry queue and ack. Enqueue BEFORE ack
         # so the message is never gone from both places.
         await schedule_retry(redis, fields, attempt=1, delay=settings.RETRY_BASE_DELAY_SECONDS)
         await redis.xack(stream, group, msg_id)
+        metrics.record_processed("failed")
 
 
 async def run_once(

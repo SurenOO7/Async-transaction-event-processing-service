@@ -3,6 +3,7 @@ import time
 from app.config import settings
 from app.consumer.retry import backoff, decode_retry, encode_retry
 from app.schemas.transactions import TransactionEvent
+from app.services import metrics
 from app.store import store_transaction
 
 
@@ -24,10 +25,13 @@ async def _reprocess(
                 timestamp=event.timestamp,
             )
         # Success: already removed from the ZSET by the claim; done.
+        metrics.record_processed("success")
     except Exception as exc:
+        metrics.record_processed("failed")
         completed = attempt + 1
         if completed >= max_attempts:
             await redis.xadd(dlq, {**fields, "attempts": str(completed), "error": str(exc)[:500]})
+            metrics.record_dead_lettered()
         else:
             await redis.zadd(zset, {encode_retry(fields, completed): now + backoff(completed)})
 
@@ -63,4 +67,5 @@ async def run_retry_once(
             max_attempts=max_attempts,
         )
         processed += 1
+    metrics.set_retry_depth(await redis.zcard(zset))
     return processed
