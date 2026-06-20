@@ -1,3 +1,72 @@
-# Skeleton only — services are filled in at Slice 10.
-# Will run: postgres, redis, migrate (one-shot), api, consumer, retry-worker.
-services: {}
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: events
+      POSTGRES_PASSWORD: events
+      POSTGRES_DB: events
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U events"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    environment: &app_env
+      DATABASE_URL: postgresql+asyncpg://events:events@postgres:5432/events
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment: *app_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  consumer:
+    build: .
+    command: python -m app.consumer.run
+    environment: *app_env
+    ports:
+      - "9100:9100"   # prometheus metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  retry-worker:
+    build: .
+    command: python -m app.consumer.retry_run
+    environment: *app_env
+    ports:
+      - "9101:9100"   # prometheus metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully

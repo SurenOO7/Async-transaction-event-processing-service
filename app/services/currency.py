@@ -1,6 +1,9 @@
 from decimal import Decimal
+from functools import partial
 
 import httpx
+
+from app.config import settings
 
 
 class CurrencyServiceError(Exception):
@@ -40,3 +43,14 @@ async def to_usd(amount: Decimal, currency: str, *, redis, http, base_url, ttl_s
         return amount
     rate = await _get_rate(currency, redis=redis, http=http, base_url=base_url, ttl_seconds=ttl_seconds)
     return amount * rate
+
+
+def build_convert(redis, http: httpx.AsyncClient):
+    # Pre-bind the static FX deps so the hot loop just calls convert(amount, currency).
+    return partial(
+        to_usd,
+        redis=redis,
+        http=http,
+        base_url=settings.FX_API_BASE_URL,
+        ttl_seconds=settings.FX_RATE_TTL_SECONDS,
+    )
